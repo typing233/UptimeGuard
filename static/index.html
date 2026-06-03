@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UptimeGuard - 服务监控</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <style>
+        .status-up { color: #10b981; }
+        .status-down { color: #ef4444; }
+        .status-dot-up { background-color: #10b981; }
+        .status-dot-down { background-color: #ef4444; }
+        .status-dot-unknown { background-color: #6b7280; }
+        .modal-overlay { background-color: rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold text-emerald-400">⬆ UptimeGuard</h1>
+            <button onclick="openCreateModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+                + 新建监控
+            </button>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-sm text-gray-400">监控总数</div>
+                <div id="stat-total" class="text-2xl font-bold">0</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-sm text-gray-400">正常</div>
+                <div id="stat-up" class="text-2xl font-bold text-emerald-400">0</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-sm text-gray-400">异常</div>
+                <div id="stat-down" class="text-2xl font-bold text-red-400">0</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-sm text-gray-400">整体可用率</div>
+                <div id="stat-uptime" class="text-2xl font-bold text-blue-400">-</div>
+            </div>
+        </div>
+
+        <div id="monitors-list" class="space-y-3">
+            <div class="text-gray-500 text-center py-8">加载中...</div>
+        </div>
+    </main>
+
+    <!-- Create/Edit Modal -->
+    <div id="modal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bg-gray-800 rounded-xl p-6 w-full max-w-lg mx-4 border border-gray-700">
+            <h2 id="modal-title" class="text-lg font-bold mb-4">新建监控</h2>
+            <form id="monitor-form" class="space-y-4">
+                <input type="hidden" id="form-id">
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">名称</label>
+                    <input id="form-name" type="text" required class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">监控类型</label>
+                        <select id="form-type" onchange="toggleFields()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                            <option value="http">HTTP/HTTPS</option>
+                            <option value="tcp">TCP</option>
+                            <option value="icmp">ICMP Ping</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">检测频率</label>
+                        <select id="form-interval" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                            <option value="30">30 秒</option>
+                            <option value="60" selected>1 分钟</option>
+                            <option value="300">5 分钟</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">目标地址</label>
+                    <input id="form-target" type="text" required placeholder="例: https://example.com 或 192.168.1.1" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                </div>
+                <div id="field-port" class="hidden">
+                    <label class="block text-sm text-gray-400 mb-1">端口</label>
+                    <input id="form-port" type="number" placeholder="例: 80, 443, 3306" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                </div>
+                <div id="field-http" class="space-y-4">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">期望状态码</label>
+                        <input id="form-status-code" type="number" value="200" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-1">关键字校验 (可选)</label>
+                        <input id="form-keyword" type="text" placeholder="响应中应包含的文本" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm text-gray-400 mb-1">超时 (秒)</label>
+                    <input id="form-timeout" type="number" value="10" min="1" max="60" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-400 hover:text-white">取消</button>
+                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm font-medium">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div id="detail-modal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bg-gray-800 rounded-xl p-6 w-full max-w-3xl mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 id="detail-title" class="text-lg font-bold"></h2>
+                <button onclick="closeDetailModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+            </div>
+            <canvas id="latency-chart" height="200"></canvas>
+            <div id="result-list" class="mt-4 space-y-2 max-h-60 overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <script>
+        let chartInstance = null;
+
+        async function fetchStatus() {
+            const res = await fetch('/api/status');
+            return res.json();
+        }
+
+        async function fetchMonitors() {
+            const res = await fetch('/api/monitors');
+            return res.json();
+        }
+
+        async function fetchResults(monitorId, hours = 24) {
+            const res = await fetch(`/api/monitors/${monitorId}/results?hours=${hours}&limit=200`);
+            return res.json();
+        }
+
+        function formatTime(isoStr) {
+            if (!isoStr) return '-';
+            const d = new Date(isoStr + 'Z');
+            return d.toLocaleString('zh-CN');
+        }
+
+        function intervalLabel(seconds) {
+            if (seconds === 30) return '30秒';
+            if (seconds === 60) return '1分钟';
+            if (seconds === 300) return '5分钟';
+            return seconds + '秒';
+        }
+
+        function typeLabel(type) {
+            return { http: 'HTTP', tcp: 'TCP', icmp: 'ICMP' }[type] || type;
+        }
+
+        async function render() {
+            const data = await fetchStatus();
+            const container = document.getElementById('monitors-list');
+
+            const total = data.length;
+            const up = data.filter(m => m.last_status === 'up').length;
+            const down = data.filter(m => m.last_status === 'down').length;
+
+            document.getElementById('stat-total').textContent = total;
+            document.getElementById('stat-up').textContent = up;
+            document.getElementById('stat-down').textContent = down;
+            document.getElementById('stat-uptime').textContent = total > 0 && (up + down) > 0
+                ? Math.round(up / (up + down) * 100) + '%'
+                : '-';
+
+            if (data.length === 0) {
+                container.innerHTML = '<div class="text-gray-500 text-center py-8">暂无监控项，点击右上角 "新建监控" 开始</div>';
+                return;
+            }
+
+            container.innerHTML = data.map(m => {
+                const statusDot = m.last_status === 'up' ? 'status-dot-up' :
+                                  m.last_status === 'down' ? 'status-dot-down' : 'status-dot-unknown';
+                const statusText = m.last_status === 'up' ? '正常' :
+                                   m.last_status === 'down' ? '异常' : '未知';
+                const statusClass = m.last_status === 'up' ? 'status-up' :
+                                    m.last_status === 'down' ? 'status-down' : 'text-gray-400';
+
+                return `
+                <div class="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 cursor-pointer" onclick="showDetail(${m.id})">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="w-3 h-3 rounded-full ${statusDot}"></div>
+                            <div>
+                                <div class="font-medium">${m.name}</div>
+                                <div class="text-sm text-gray-400">${typeLabel(m.monitor_type)} · ${m.target} · ${intervalLabel(m.interval)}</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <div class="text-right">
+                                <div class="text-sm font-medium ${statusClass}">${statusText}</div>
+                                <div class="text-xs text-gray-500">${m.last_latency != null ? m.last_latency.toFixed(1) + ' ms' : '-'}</div>
+                            </div>
+                            <div class="text-xs text-gray-500">${formatTime(m.last_check_time)}</div>
+                            <div class="flex gap-1">
+                                <button onclick="event.stopPropagation(); triggerCheck(${m.id})" title="立即检测" class="p-1 hover:bg-gray-700 rounded">▶</button>
+                                <button onclick="event.stopPropagation(); openEditModal(${m.id})" title="编辑" class="p-1 hover:bg-gray-700 rounded">✎</button>
+                                <button onclick="event.stopPropagation(); deleteMonitor(${m.id}, '${m.name}')" title="删除" class="p-1 hover:bg-gray-700 rounded text-red-400">✕</button>
+                            </div>
+                        </div>
+                    </div>
+                    ${m.last_error ? `<div class="mt-2 text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded">${m.last_error}</div>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        async function showDetail(monitorId) {
+            const monitors = await fetchMonitors();
+            const monitor = monitors.find(m => m.id === monitorId);
+            if (!monitor) return;
+
+            document.getElementById('detail-title').textContent = monitor.name;
+            document.getElementById('detail-modal').classList.remove('hidden');
+            document.getElementById('detail-modal').classList.add('flex');
+
+            const results = await fetchResults(monitorId, 6);
+            const sorted = results.reverse();
+
+            const ctx = document.getElementById('latency-chart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: sorted.map(r => {
+                        const d = new Date(r.timestamp + 'Z');
+                        return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+                    }),
+                    datasets: [{
+                        label: '响应时间 (ms)',
+                        data: sorted.map(r => r.latency),
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 2,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#9ca3af', maxTicksLimit: 10 }, grid: { color: '#374151' } },
+                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' }, beginAtZero: true }
+                    }
+                }
+            });
+
+            const listEl = document.getElementById('result-list');
+            listEl.innerHTML = results.slice(0, 50).map(r => {
+                const statusCls = r.status === 'up' ? 'text-emerald-400' : 'text-red-400';
+                return `<div class="flex justify-between items-center text-sm bg-gray-750 px-3 py-2 rounded border border-gray-700">
+                    <span class="${statusCls} font-medium">${r.status === 'up' ? '正常' : '异常'}</span>
+                    <span class="text-gray-400">${r.latency != null ? r.latency.toFixed(1) + ' ms' : '-'}</span>
+                    <span class="text-gray-500 text-xs">${formatTime(r.timestamp)}</span>
+                    <span class="text-gray-500 text-xs max-w-48 truncate">${r.error || '-'}</span>
+                </div>`;
+            }).join('');
+        }
+
+        function closeDetailModal() {
+            document.getElementById('detail-modal').classList.add('hidden');
+            document.getElementById('detail-modal').classList.remove('flex');
+        }
+
+        function toggleFields() {
+            const type = document.getElementById('form-type').value;
+            document.getElementById('field-http').classList.toggle('hidden', type !== 'http');
+            document.getElementById('field-port').classList.toggle('hidden', type !== 'tcp');
+        }
+
+        function openCreateModal() {
+            document.getElementById('modal-title').textContent = '新建监控';
+            document.getElementById('form-id').value = '';
+            document.getElementById('form-name').value = '';
+            document.getElementById('form-type').value = 'http';
+            document.getElementById('form-target').value = '';
+            document.getElementById('form-port').value = '';
+            document.getElementById('form-interval').value = '60';
+            document.getElementById('form-status-code').value = '200';
+            document.getElementById('form-keyword').value = '';
+            document.getElementById('form-timeout').value = '10';
+            toggleFields();
+            document.getElementById('modal').classList.remove('hidden');
+            document.getElementById('modal').classList.add('flex');
+        }
+
+        async function openEditModal(id) {
+            const monitors = await fetchMonitors();
+            const m = monitors.find(x => x.id === id);
+            if (!m) return;
+
+            document.getElementById('modal-title').textContent = '编辑监控';
+            document.getElementById('form-id').value = m.id;
+            document.getElementById('form-name').value = m.name;
+            document.getElementById('form-type').value = m.monitor_type;
+            document.getElementById('form-target').value = m.target;
+            document.getElementById('form-port').value = m.port || '';
+            document.getElementById('form-interval').value = m.interval;
+            document.getElementById('form-status-code').value = m.expected_status_code || 200;
+            document.getElementById('form-keyword').value = m.keyword || '';
+            document.getElementById('form-timeout').value = m.timeout;
+            toggleFields();
+            document.getElementById('modal').classList.remove('hidden');
+            document.getElementById('modal').classList.add('flex');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.add('hidden');
+            document.getElementById('modal').classList.remove('flex');
+        }
+
+        document.getElementById('monitor-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const id = document.getElementById('form-id').value;
+            const body = {
+                name: document.getElementById('form-name').value,
+                monitor_type: document.getElementById('form-type').value,
+                target: document.getElementById('form-target').value,
+                interval: parseInt(document.getElementById('form-interval').value),
+                timeout: parseInt(document.getElementById('form-timeout').value),
+                port: document.getElementById('form-port').value ? parseInt(document.getElementById('form-port').value) : null,
+                expected_status_code: parseInt(document.getElementById('form-status-code').value) || 200,
+                keyword: document.getElementById('form-keyword').value || null,
+                active: true,
+            };
+
+            if (id) {
+                await fetch(`/api/monitors/${id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+            } else {
+                await fetch('/api/monitors', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+            }
+
+            closeModal();
+            render();
+        });
+
+        async function deleteMonitor(id, name) {
+            if (!confirm(`确定删除监控 "${name}" 吗？`)) return;
+            await fetch(`/api/monitors/${id}`, { method: 'DELETE' });
+            render();
+        }
+
+        async function triggerCheck(id) {
+            await fetch(`/api/monitors/${id}/check`, { method: 'POST' });
+            setTimeout(render, 500);
+        }
+
+        render();
+        setInterval(render, 15000);
+    </script>
+</body>
+</html>
