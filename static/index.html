@@ -3,358 +3,520 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>UptimeGuard - 服务监控</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <title>UptimeGuard - 监控仪表盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <style>
-        .status-up { color: #10b981; }
-        .status-down { color: #ef4444; }
-        .status-dot-up { background-color: #10b981; }
-        .status-dot-down { background-color: #ef4444; }
-        .status-dot-unknown { background-color: #6b7280; }
-        .modal-overlay { background-color: rgba(0,0,0,0.5); }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; }
+        .header { background: #1a1a2e; color: white; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+        .header h1 { font-size: 20px; font-weight: 600; }
+        .header .nav { display: flex; gap: 16px; }
+        .header .nav a { color: #a0aec0; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+        .header .nav a.active, .header .nav a:hover { background: #2d2d44; color: white; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat-card .label { font-size: 12px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+        .stat-card .value.up { color: #10b981; }
+        .stat-card .value.down { color: #ef4444; }
+        .card { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+        .card-header { padding: 16px 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; }
+        .card-header h2 { font-size: 16px; font-weight: 600; }
+        .card-body { padding: 20px; }
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .btn-outline { background: transparent; border: 1px solid #d1d5db; color: #374151; }
+        .btn-outline:hover { background: #f9fafb; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid #f3f4f6; }
+        th { font-size: 12px; text-transform: uppercase; color: #6b7280; font-weight: 600; letter-spacing: 0.5px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+        .badge-up { background: #d1fae5; color: #065f46; }
+        .badge-down { background: #fee2e2; color: #991b1b; }
+        .badge-pending { background: #e5e7eb; color: #374151; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; justify-content: center; align-items: center; }
+        .modal-overlay.show { display: flex; }
+        .modal { background: white; border-radius: 12px; padding: 24px; width: 90%; max-width: 560px; max-height: 80vh; overflow-y: auto; }
+        .modal h3 { margin-bottom: 16px; font-size: 18px; }
+        .form-group { margin-bottom: 14px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: #374151; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+        .form-group textarea { min-height: 80px; resize: vertical; }
+        .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+        .chart-container { height: 200px; margin-top: 16px; }
+        .monitor-row { cursor: pointer; }
+        .monitor-row:hover { background: #f9fafb; }
+        .section { display: none; }
+        .section.active { display: block; }
+        .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+        .tab { padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; background: #f3f4f6; }
+        .tab.active { background: #3b82f6; color: white; }
+        .channel-tag { display: inline-block; padding: 2px 8px; background: #ede9fe; color: #5b21b6; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+        .empty { text-align: center; padding: 40px; color: #9ca3af; }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen">
-    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <div class="max-w-7xl mx-auto flex justify-between items-center">
-            <h1 class="text-xl font-bold text-emerald-400">⬆ UptimeGuard</h1>
-            <button onclick="openCreateModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
-                + 新建监控
-            </button>
-        </div>
-    </nav>
-
-    <main class="max-w-7xl mx-auto px-6 py-6">
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-sm text-gray-400">监控总数</div>
-                <div id="stat-total" class="text-2xl font-bold">0</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-sm text-gray-400">正常</div>
-                <div id="stat-up" class="text-2xl font-bold text-emerald-400">0</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-sm text-gray-400">异常</div>
-                <div id="stat-down" class="text-2xl font-bold text-red-400">0</div>
-            </div>
-            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                <div class="text-sm text-gray-400">整体可用率</div>
-                <div id="stat-uptime" class="text-2xl font-bold text-blue-400">-</div>
-            </div>
-        </div>
-
-        <div id="monitors-list" class="space-y-3">
-            <div class="text-gray-500 text-center py-8">加载中...</div>
-        </div>
-    </main>
-
-    <!-- Create/Edit Modal -->
-    <div id="modal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
-        <div class="bg-gray-800 rounded-xl p-6 w-full max-w-lg mx-4 border border-gray-700">
-            <h2 id="modal-title" class="text-lg font-bold mb-4">新建监控</h2>
-            <form id="monitor-form" class="space-y-4">
-                <input type="hidden" id="form-id">
-                <div>
-                    <label class="block text-sm text-gray-400 mb-1">名称</label>
-                    <input id="form-name" type="text" required class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">监控类型</label>
-                        <select id="form-type" onchange="toggleFields()" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                            <option value="http">HTTP/HTTPS</option>
-                            <option value="tcp">TCP</option>
-                            <option value="icmp">ICMP Ping</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">检测频率</label>
-                        <select id="form-interval" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                            <option value="30">30 秒</option>
-                            <option value="60" selected>1 分钟</option>
-                            <option value="300">5 分钟</option>
-                        </select>
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-sm text-gray-400 mb-1">目标地址</label>
-                    <input id="form-target" type="text" required placeholder="例: https://example.com 或 192.168.1.1" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                </div>
-                <div id="field-port" class="hidden">
-                    <label class="block text-sm text-gray-400 mb-1">端口</label>
-                    <input id="form-port" type="number" placeholder="例: 80, 443, 3306" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                </div>
-                <div id="field-http" class="space-y-4">
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">期望状态码</label>
-                        <input id="form-status-code" type="number" value="200" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                    </div>
-                    <div>
-                        <label class="block text-sm text-gray-400 mb-1">关键字校验 (可选)</label>
-                        <input id="form-keyword" type="text" placeholder="响应中应包含的文本" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-sm text-gray-400 mb-1">超时 (秒)</label>
-                    <input id="form-timeout" type="number" value="10" min="1" max="60" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
-                </div>
-                <div class="flex justify-end gap-3 pt-2">
-                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-gray-400 hover:text-white">取消</button>
-                    <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm font-medium">保存</button>
-                </div>
-            </form>
+<body>
+    <div class="header">
+        <h1>UptimeGuard</h1>
+        <div class="nav">
+            <a class="active" onclick="showSection('dashboard')">仪表盘</a>
+            <a onclick="showSection('alerts')">告警配置</a>
+            <a onclick="showSection('status-pages')">状态页</a>
         </div>
     </div>
 
-    <!-- Detail Modal -->
-    <div id="detail-modal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
-        <div class="bg-gray-800 rounded-xl p-6 w-full max-w-3xl mx-4 border border-gray-700 max-h-[90vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-4">
-                <h2 id="detail-title" class="text-lg font-bold"></h2>
-                <button onclick="closeDetailModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+    <div class="container">
+        <!-- Dashboard Section -->
+        <div id="section-dashboard" class="section active">
+            <div class="stats">
+                <div class="stat-card"><div class="label">总监控数</div><div class="value" id="stat-total">0</div></div>
+                <div class="stat-card"><div class="label">正常</div><div class="value up" id="stat-up">0</div></div>
+                <div class="stat-card"><div class="label">异常</div><div class="value down" id="stat-down">0</div></div>
+                <div class="stat-card"><div class="label">待检测</div><div class="value" id="stat-pending">0</div></div>
             </div>
-            <canvas id="latency-chart" height="200"></canvas>
-            <div id="result-list" class="mt-4 space-y-2 max-h-60 overflow-y-auto"></div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>监控项列表</h2>
+                    <button class="btn btn-primary" onclick="openMonitorModal()">+ 新建监控</button>
+                </div>
+                <div class="card-body">
+                    <table>
+                        <thead><tr><th>名称</th><th>类型</th><th>目标</th><th>频率</th><th>状态</th><th>上次检测</th><th>操作</th></tr></thead>
+                        <tbody id="monitors-table"></tbody>
+                    </table>
+                    <div class="empty" id="monitors-empty" style="display:none;">暂无监控项，点击上方按钮创建</div>
+                </div>
+            </div>
+
+            <div class="card" id="detail-card" style="display:none;">
+                <div class="card-header">
+                    <h2 id="detail-title">监控详情</h2>
+                    <button class="btn btn-outline btn-sm" onclick="closeDetail()">关闭</button>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container"><canvas id="latency-chart"></canvas></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts Section -->
+        <div id="section-alerts" class="section">
+            <div class="card">
+                <div class="card-header">
+                    <h2>通知渠道</h2>
+                    <button class="btn btn-primary" onclick="openChannelModal()">+ 新建渠道</button>
+                </div>
+                <div class="card-body">
+                    <table>
+                        <thead><tr><th>名称</th><th>类型</th><th>状态</th><th>操作</th></tr></thead>
+                        <tbody id="channels-table"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2>告警策略</h2>
+                    <button class="btn btn-primary" onclick="openPolicyModal()">+ 设置策略</button>
+                </div>
+                <div class="card-body">
+                    <table>
+                        <thead><tr><th>监控项</th><th>失败阈值</th><th>恢复通知</th><th>渠道</th><th>静默时段</th><th>重复间隔</th><th>操作</th></tr></thead>
+                        <tbody id="policies-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Pages Section -->
+        <div id="section-status-pages" class="section">
+            <div class="card">
+                <div class="card-header">
+                    <h2>公开状态页</h2>
+                    <button class="btn btn-primary" onclick="openStatusPageModal()">+ 新建状态页</button>
+                </div>
+                <div class="card-body">
+                    <table>
+                        <thead><tr><th>标题</th><th>链接</th><th>状态</th><th>操作</th></tr></thead>
+                        <tbody id="status-pages-table"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monitor Modal -->
+    <div class="modal-overlay" id="monitor-modal">
+        <div class="modal">
+            <h3 id="monitor-modal-title">新建监控</h3>
+            <input type="hidden" id="monitor-edit-id">
+            <div class="form-group"><label>名称</label><input id="m-name" placeholder="My Website"></div>
+            <div class="form-group"><label>监控类型</label>
+                <select id="m-type" onchange="toggleMonitorFields()">
+                    <option value="http">HTTP/HTTPS</option>
+                    <option value="tcp">TCP</option>
+                    <option value="icmp">ICMP Ping</option>
+                </select>
+            </div>
+            <div class="form-group"><label>目标地址</label><input id="m-target" placeholder="https://example.com 或 IP"></div>
+            <div class="form-group" id="fg-port" style="display:none;"><label>端口</label><input id="m-port" type="number" placeholder="80"></div>
+            <div class="form-group"><label>检测频率（秒）</label>
+                <select id="m-interval">
+                    <option value="30">30秒</option>
+                    <option value="60" selected>1分钟</option>
+                    <option value="300">5分钟</option>
+                    <option value="600">10分钟</option>
+                </select>
+            </div>
+            <div class="form-group"><label>超时（秒）</label><input id="m-timeout" type="number" value="10"></div>
+            <div class="form-group" id="fg-status"><label>期望状态码</label><input id="m-status" type="number" value="200"></div>
+            <div class="form-group" id="fg-keyword"><label>关键字校验（可选）</label><input id="m-keyword" placeholder="响应中应包含的文本"></div>
+            <div class="form-group" id="fg-method"><label>HTTP方法</label>
+                <select id="m-method"><option value="GET">GET</option><option value="POST">POST</option><option value="HEAD">HEAD</option></select>
+            </div>
+            <div class="form-actions">
+                <button class="btn btn-outline" onclick="closeModal('monitor-modal')">取消</button>
+                <button class="btn btn-primary" onclick="saveMonitor()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Channel Modal -->
+    <div class="modal-overlay" id="channel-modal">
+        <div class="modal">
+            <h3>新建通知渠道</h3>
+            <input type="hidden" id="channel-edit-id">
+            <div class="form-group"><label>名称</label><input id="c-name" placeholder="告警邮箱"></div>
+            <div class="form-group"><label>渠道类型</label>
+                <select id="c-type" onchange="toggleChannelFields()">
+                    <option value="email">邮件</option>
+                    <option value="webhook">Webhook</option>
+                    <option value="dingtalk">钉钉机器人</option>
+                    <option value="feishu">飞书机器人</option>
+                    <option value="wecom">企业微信机器人</option>
+                </select>
+            </div>
+            <div id="channel-fields"></div>
+            <div class="form-actions">
+                <button class="btn btn-outline" onclick="closeModal('channel-modal')">取消</button>
+                <button class="btn btn-primary" onclick="saveChannel()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Policy Modal -->
+    <div class="modal-overlay" id="policy-modal">
+        <div class="modal">
+            <h3>设置告警策略</h3>
+            <div class="form-group"><label>监控项</label><select id="p-monitor"></select></div>
+            <div class="form-group"><label>连续失败次数触发告警</label><input id="p-threshold" type="number" value="3"></div>
+            <div class="form-group"><label>恢复后通知</label><select id="p-recovery"><option value="true">是</option><option value="false">否</option></select></div>
+            <div class="form-group"><label>通知渠道（多选Ctrl+Click）</label><select id="p-channels" multiple style="height:80px;"></select></div>
+            <div class="form-group"><label>静默开始（HH:MM，可选）</label><input id="p-silence-start" placeholder="23:00"></div>
+            <div class="form-group"><label>静默结束（HH:MM，可选）</label><input id="p-silence-end" placeholder="07:00"></div>
+            <div class="form-group"><label>重复提醒间隔（分钟，0=不重复）</label><input id="p-repeat" type="number" value="0"></div>
+            <div class="form-actions">
+                <button class="btn btn-outline" onclick="closeModal('policy-modal')">取消</button>
+                <button class="btn btn-primary" onclick="savePolicy()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Page Modal -->
+    <div class="modal-overlay" id="statuspage-modal">
+        <div class="modal">
+            <h3 id="sp-modal-title">新建状态页</h3>
+            <input type="hidden" id="sp-edit-id">
+            <div class="form-group"><label>标题</label><input id="sp-title" placeholder="Service Status"></div>
+            <div class="form-group"><label>链接标识（slug）</label><input id="sp-slug" placeholder="my-status"></div>
+            <div class="form-group"><label>Logo URL（可选）</label><input id="sp-logo" placeholder="https://..."></div>
+            <div class="form-group"><label>公开</label><select id="sp-public"><option value="true">是</option><option value="false">否</option></select></div>
+            <div class="form-group"><label>添加服务（监控项）</label><select id="sp-monitors" multiple style="height:80px;"></select></div>
+            <div class="form-group"><label>分组名称</label><input id="sp-group" value="Default" placeholder="分组名"></div>
+            <div class="form-actions">
+                <button class="btn btn-outline" onclick="closeModal('statuspage-modal')">取消</button>
+                <button class="btn btn-primary" onclick="saveStatusPage()">保存</button>
+            </div>
         </div>
     </div>
 
     <script>
-        let chartInstance = null;
+    let monitors = [], channels = [], latencyChart = null;
 
-        async function fetchStatus() {
-            const res = await fetch('/api/status');
-            return res.json();
-        }
+    async function api(url, method = 'GET', body = null) {
+        const opts = { method, headers: { 'Content-Type': 'application/json' } };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(url, opts);
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
 
-        async function fetchMonitors() {
-            const res = await fetch('/api/monitors');
-            return res.json();
-        }
+    function showSection(name) {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById('section-' + name).classList.add('active');
+        document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+        event.target.classList.add('active');
+        if (name === 'alerts') loadAlerts();
+        if (name === 'status-pages') loadStatusPages();
+    }
 
-        async function fetchResults(monitorId, hours = 24) {
-            const res = await fetch(`/api/monitors/${monitorId}/results?hours=${hours}&limit=200`);
-            return res.json();
-        }
+    function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+    function openModal(id) { document.getElementById(id).classList.add('show'); }
 
-        function formatTime(isoStr) {
-            if (!isoStr) return '-';
-            const d = new Date(isoStr + 'Z');
-            return d.toLocaleString('zh-CN');
-        }
+    // --- Monitors ---
+    async function loadMonitors() {
+        monitors = await api('/api/monitors');
+        const tbody = document.getElementById('monitors-table');
+        const empty = document.getElementById('monitors-empty');
+        if (monitors.length === 0) { tbody.innerHTML = ''; empty.style.display = 'block'; return; }
+        empty.style.display = 'none';
+        tbody.innerHTML = monitors.map(m => `
+            <tr class="monitor-row" onclick="showDetail(${m.id})">
+                <td><strong>${m.name}</strong></td>
+                <td>${m.monitor_type.toUpperCase()}</td>
+                <td style="font-size:12px;color:#6b7280;">${m.target}${m.port ? ':' + m.port : ''}</td>
+                <td>${m.interval}s</td>
+                <td><span class="badge badge-${m.status}">${m.status}</span></td>
+                <td style="font-size:12px;">${m.last_check ? new Date(m.last_check).toLocaleString() : '-'}</td>
+                <td>
+                    <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();editMonitor(${m.id})">编辑</button>
+                    <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteMonitor(${m.id})">删除</button>
+                </td>
+            </tr>
+        `).join('');
 
-        function intervalLabel(seconds) {
-            if (seconds === 30) return '30秒';
-            if (seconds === 60) return '1分钟';
-            if (seconds === 300) return '5分钟';
-            return seconds + '秒';
-        }
+        document.getElementById('stat-total').textContent = monitors.length;
+        document.getElementById('stat-up').textContent = monitors.filter(m => m.status === 'up').length;
+        document.getElementById('stat-down').textContent = monitors.filter(m => m.status === 'down').length;
+        document.getElementById('stat-pending').textContent = monitors.filter(m => m.status === 'pending').length;
+    }
 
-        function typeLabel(type) {
-            return { http: 'HTTP', tcp: 'TCP', icmp: 'ICMP' }[type] || type;
-        }
+    function toggleMonitorFields() {
+        const type = document.getElementById('m-type').value;
+        document.getElementById('fg-port').style.display = type === 'tcp' ? '' : 'none';
+        document.getElementById('fg-status').style.display = type === 'http' ? '' : 'none';
+        document.getElementById('fg-keyword').style.display = type === 'http' ? '' : 'none';
+        document.getElementById('fg-method').style.display = type === 'http' ? '' : 'none';
+    }
 
-        async function render() {
-            const data = await fetchStatus();
-            const container = document.getElementById('monitors-list');
+    function openMonitorModal(data = null) {
+        document.getElementById('monitor-modal-title').textContent = data ? '编辑监控' : '新建监控';
+        document.getElementById('monitor-edit-id').value = data ? data.id : '';
+        document.getElementById('m-name').value = data ? data.name : '';
+        document.getElementById('m-type').value = data ? data.monitor_type : 'http';
+        document.getElementById('m-target').value = data ? data.target : '';
+        document.getElementById('m-port').value = data ? (data.port || '') : '';
+        document.getElementById('m-interval').value = data ? data.interval : '60';
+        document.getElementById('m-timeout').value = data ? data.timeout : 10;
+        document.getElementById('m-status').value = data ? (data.expected_status || 200) : 200;
+        document.getElementById('m-keyword').value = data ? (data.keyword || '') : '';
+        document.getElementById('m-method').value = data ? (data.http_method || 'GET') : 'GET';
+        toggleMonitorFields();
+        openModal('monitor-modal');
+    }
 
-            const total = data.length;
-            const up = data.filter(m => m.last_status === 'up').length;
-            const down = data.filter(m => m.last_status === 'down').length;
+    async function editMonitor(id) {
+        const m = monitors.find(x => x.id === id);
+        openMonitorModal(m);
+    }
 
-            document.getElementById('stat-total').textContent = total;
-            document.getElementById('stat-up').textContent = up;
-            document.getElementById('stat-down').textContent = down;
-            document.getElementById('stat-uptime').textContent = total > 0 && (up + down) > 0
-                ? Math.round(up / (up + down) * 100) + '%'
-                : '-';
+    async function saveMonitor() {
+        const id = document.getElementById('monitor-edit-id').value;
+        const body = {
+            name: document.getElementById('m-name').value,
+            monitor_type: document.getElementById('m-type').value,
+            target: document.getElementById('m-target').value,
+            port: parseInt(document.getElementById('m-port').value) || null,
+            interval: parseInt(document.getElementById('m-interval').value),
+            timeout: parseInt(document.getElementById('m-timeout').value),
+            expected_status: parseInt(document.getElementById('m-status').value) || 200,
+            keyword: document.getElementById('m-keyword').value || null,
+            http_method: document.getElementById('m-method').value,
+        };
+        if (id) await api(`/api/monitors/${id}`, 'PUT', body);
+        else await api('/api/monitors', 'POST', body);
+        closeModal('monitor-modal');
+        loadMonitors();
+    }
 
-            if (data.length === 0) {
-                container.innerHTML = '<div class="text-gray-500 text-center py-8">暂无监控项，点击右上角 "新建监控" 开始</div>';
-                return;
-            }
+    async function deleteMonitor(id) {
+        if (!confirm('确定删除此监控项？')) return;
+        await api(`/api/monitors/${id}`, 'DELETE');
+        loadMonitors();
+    }
 
-            container.innerHTML = data.map(m => {
-                const statusDot = m.last_status === 'up' ? 'status-dot-up' :
-                                  m.last_status === 'down' ? 'status-dot-down' : 'status-dot-unknown';
-                const statusText = m.last_status === 'up' ? '正常' :
-                                   m.last_status === 'down' ? '异常' : '未知';
-                const statusClass = m.last_status === 'up' ? 'status-up' :
-                                    m.last_status === 'down' ? 'status-down' : 'text-gray-400';
+    async function showDetail(id) {
+        const results = await api(`/api/monitors/${id}/results?limit=50`);
+        const monitor = monitors.find(m => m.id === id);
+        document.getElementById('detail-card').style.display = '';
+        document.getElementById('detail-title').textContent = `${monitor.name} - 响应时间`;
 
-                return `
-                <div class="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 cursor-pointer" onclick="showDetail(${m.id})">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-3">
-                            <div class="w-3 h-3 rounded-full ${statusDot}"></div>
-                            <div>
-                                <div class="font-medium">${m.name}</div>
-                                <div class="text-sm text-gray-400">${typeLabel(m.monitor_type)} · ${m.target} · ${intervalLabel(m.interval)}</div>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-4">
-                            <div class="text-right">
-                                <div class="text-sm font-medium ${statusClass}">${statusText}</div>
-                                <div class="text-xs text-gray-500">${m.last_latency != null ? m.last_latency.toFixed(1) + ' ms' : '-'}</div>
-                            </div>
-                            <div class="text-xs text-gray-500">${formatTime(m.last_check_time)}</div>
-                            <div class="flex gap-1">
-                                <button onclick="event.stopPropagation(); triggerCheck(${m.id})" title="立即检测" class="p-1 hover:bg-gray-700 rounded">▶</button>
-                                <button onclick="event.stopPropagation(); openEditModal(${m.id})" title="编辑" class="p-1 hover:bg-gray-700 rounded">✎</button>
-                                <button onclick="event.stopPropagation(); deleteMonitor(${m.id}, '${m.name}')" title="删除" class="p-1 hover:bg-gray-700 rounded text-red-400">✕</button>
-                            </div>
-                        </div>
-                    </div>
-                    ${m.last_error ? `<div class="mt-2 text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded">${m.last_error}</div>` : ''}
-                </div>`;
-            }).join('');
-        }
+        const labels = results.reverse().map(r => new Date(r.timestamp).toLocaleTimeString());
+        const data = results.map(r => r.latency || 0);
 
-        async function showDetail(monitorId) {
-            const monitors = await fetchMonitors();
-            const monitor = monitors.find(m => m.id === monitorId);
-            if (!monitor) return;
-
-            document.getElementById('detail-title').textContent = monitor.name;
-            document.getElementById('detail-modal').classList.remove('hidden');
-            document.getElementById('detail-modal').classList.add('flex');
-
-            const results = await fetchResults(monitorId, 6);
-            const sorted = results.reverse();
-
-            const ctx = document.getElementById('latency-chart').getContext('2d');
-            if (chartInstance) chartInstance.destroy();
-
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: sorted.map(r => {
-                        const d = new Date(r.timestamp + 'Z');
-                        return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-                    }),
-                    datasets: [{
-                        label: '响应时间 (ms)',
-                        data: sorted.map(r => r.latency),
-                        borderColor: '#10b981',
-                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 2,
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#9ca3af', maxTicksLimit: 10 }, grid: { color: '#374151' } },
-                        y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' }, beginAtZero: true }
-                    }
-                }
-            });
-
-            const listEl = document.getElementById('result-list');
-            listEl.innerHTML = results.slice(0, 50).map(r => {
-                const statusCls = r.status === 'up' ? 'text-emerald-400' : 'text-red-400';
-                return `<div class="flex justify-between items-center text-sm bg-gray-750 px-3 py-2 rounded border border-gray-700">
-                    <span class="${statusCls} font-medium">${r.status === 'up' ? '正常' : '异常'}</span>
-                    <span class="text-gray-400">${r.latency != null ? r.latency.toFixed(1) + ' ms' : '-'}</span>
-                    <span class="text-gray-500 text-xs">${formatTime(r.timestamp)}</span>
-                    <span class="text-gray-500 text-xs max-w-48 truncate">${r.error || '-'}</span>
-                </div>`;
-            }).join('');
-        }
-
-        function closeDetailModal() {
-            document.getElementById('detail-modal').classList.add('hidden');
-            document.getElementById('detail-modal').classList.remove('flex');
-        }
-
-        function toggleFields() {
-            const type = document.getElementById('form-type').value;
-            document.getElementById('field-http').classList.toggle('hidden', type !== 'http');
-            document.getElementById('field-port').classList.toggle('hidden', type !== 'tcp');
-        }
-
-        function openCreateModal() {
-            document.getElementById('modal-title').textContent = '新建监控';
-            document.getElementById('form-id').value = '';
-            document.getElementById('form-name').value = '';
-            document.getElementById('form-type').value = 'http';
-            document.getElementById('form-target').value = '';
-            document.getElementById('form-port').value = '';
-            document.getElementById('form-interval').value = '60';
-            document.getElementById('form-status-code').value = '200';
-            document.getElementById('form-keyword').value = '';
-            document.getElementById('form-timeout').value = '10';
-            toggleFields();
-            document.getElementById('modal').classList.remove('hidden');
-            document.getElementById('modal').classList.add('flex');
-        }
-
-        async function openEditModal(id) {
-            const monitors = await fetchMonitors();
-            const m = monitors.find(x => x.id === id);
-            if (!m) return;
-
-            document.getElementById('modal-title').textContent = '编辑监控';
-            document.getElementById('form-id').value = m.id;
-            document.getElementById('form-name').value = m.name;
-            document.getElementById('form-type').value = m.monitor_type;
-            document.getElementById('form-target').value = m.target;
-            document.getElementById('form-port').value = m.port || '';
-            document.getElementById('form-interval').value = m.interval;
-            document.getElementById('form-status-code').value = m.expected_status_code || 200;
-            document.getElementById('form-keyword').value = m.keyword || '';
-            document.getElementById('form-timeout').value = m.timeout;
-            toggleFields();
-            document.getElementById('modal').classList.remove('hidden');
-            document.getElementById('modal').classList.add('flex');
-        }
-
-        function closeModal() {
-            document.getElementById('modal').classList.add('hidden');
-            document.getElementById('modal').classList.remove('flex');
-        }
-
-        document.getElementById('monitor-form').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const id = document.getElementById('form-id').value;
-            const body = {
-                name: document.getElementById('form-name').value,
-                monitor_type: document.getElementById('form-type').value,
-                target: document.getElementById('form-target').value,
-                interval: parseInt(document.getElementById('form-interval').value),
-                timeout: parseInt(document.getElementById('form-timeout').value),
-                port: document.getElementById('form-port').value ? parseInt(document.getElementById('form-port').value) : null,
-                expected_status_code: parseInt(document.getElementById('form-status-code').value) || 200,
-                keyword: document.getElementById('form-keyword').value || null,
-                active: true,
-            };
-
-            if (id) {
-                await fetch(`/api/monitors/${id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-            } else {
-                await fetch('/api/monitors', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
-            }
-
-            closeModal();
-            render();
+        if (latencyChart) latencyChart.destroy();
+        latencyChart = new Chart(document.getElementById('latency-chart'), {
+            type: 'line',
+            data: { labels, datasets: [{ label: '延迟 (ms)', data, borderColor: '#3b82f6', tension: 0.3, fill: true, backgroundColor: 'rgba(59,130,246,0.1)' }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
         });
+    }
 
-        async function deleteMonitor(id, name) {
-            if (!confirm(`确定删除监控 "${name}" 吗？`)) return;
-            await fetch(`/api/monitors/${id}`, { method: 'DELETE' });
-            render();
+    function closeDetail() { document.getElementById('detail-card').style.display = 'none'; }
+
+    // --- Alert Channels & Policies ---
+    async function loadAlerts() {
+        channels = await api('/api/alert-channels');
+        document.getElementById('channels-table').innerHTML = channels.map(c => `
+            <tr>
+                <td>${c.name}</td>
+                <td><span class="channel-tag">${c.channel_type}</span></td>
+                <td>${c.enabled ? '✓ 启用' : '✗ 禁用'}</td>
+                <td><button class="btn btn-danger btn-sm" onclick="deleteChannel(${c.id})">删除</button></td>
+            </tr>
+        `).join('');
+
+        // Load policies
+        const policies = [];
+        for (const m of monitors) {
+            try { const p = await api(`/api/alert-policies/${m.id}`); policies.push({...p, monitor_name: m.name}); } catch(e) {}
         }
+        document.getElementById('policies-table').innerHTML = policies.map(p => `
+            <tr>
+                <td>${p.monitor_name}</td>
+                <td>${p.failure_threshold}次</td>
+                <td>${p.recovery_notify ? '是' : '否'}</td>
+                <td>${(p.channel_ids||[]).map(id => { const c = channels.find(x=>x.id===id); return c ? `<span class="channel-tag">${c.name}</span>` : ''; }).join('')}</td>
+                <td>${p.silence_start && p.silence_end ? p.silence_start + '-' + p.silence_end : '-'}</td>
+                <td>${p.repeat_interval ? p.repeat_interval + '分钟' : '不重复'}</td>
+                <td><button class="btn btn-danger btn-sm" onclick="deletePolicy(${p.monitor_id})">删除</button></td>
+            </tr>
+        `).join('');
+    }
 
-        async function triggerCheck(id) {
-            await fetch(`/api/monitors/${id}/check`, { method: 'POST' });
-            setTimeout(render, 500);
+    function toggleChannelFields() {
+        const type = document.getElementById('c-type').value;
+        const container = document.getElementById('channel-fields');
+        if (type === 'email') {
+            container.innerHTML = `
+                <div class="form-group"><label>SMTP 服务器</label><input id="cf-host" placeholder="smtp.example.com"></div>
+                <div class="form-group"><label>端口</label><input id="cf-port" type="number" value="587"></div>
+                <div class="form-group"><label>用户名</label><input id="cf-user"></div>
+                <div class="form-group"><label>密码</label><input id="cf-pass" type="password"></div>
+                <div class="form-group"><label>发件人</label><input id="cf-from" placeholder="alert@example.com"></div>
+                <div class="form-group"><label>收件人（逗号分隔）</label><input id="cf-to" placeholder="admin@example.com"></div>`;
+        } else if (type === 'webhook') {
+            container.innerHTML = `
+                <div class="form-group"><label>Webhook URL</label><input id="cf-url" placeholder="https://..."></div>
+                <div class="form-group"><label>自定义 JSON 请求体（可用变量：$monitor_name, $target, $status, $failure_count, $down_time, $recovery_time, $error）</label>
+                    <textarea id="cf-body" placeholder='{"text": "[$status] $monitor_name ($target) 故障 $failure_count 次"}'></textarea></div>`;
+        } else {
+            container.innerHTML = `<div class="form-group"><label>Webhook URL</label><input id="cf-url" placeholder="https://..."></div>`;
         }
+    }
 
-        render();
-        setInterval(render, 15000);
+    function openChannelModal() { toggleChannelFields(); openModal('channel-modal'); }
+
+    async function saveChannel() {
+        const type = document.getElementById('c-type').value;
+        let config = {};
+        if (type === 'email') {
+            config = { smtp_host: document.getElementById('cf-host').value, smtp_port: parseInt(document.getElementById('cf-port').value), smtp_user: document.getElementById('cf-user').value, smtp_pass: document.getElementById('cf-pass').value, from_addr: document.getElementById('cf-from').value, to_addrs: document.getElementById('cf-to').value.split(',').map(s=>s.trim()), use_tls: true };
+        } else if (type === 'webhook') {
+            config = { url: document.getElementById('cf-url').value };
+            const bodyEl = document.getElementById('cf-body');
+            if (bodyEl && bodyEl.value.trim()) { try { config.body_template = JSON.parse(bodyEl.value); } catch(e) { config.body_template = bodyEl.value; } }
+        } else {
+            config = { webhook_url: document.getElementById('cf-url').value };
+        }
+        await api('/api/alert-channels', 'POST', { name: document.getElementById('c-name').value, channel_type: type, config, enabled: true });
+        closeModal('channel-modal');
+        loadAlerts();
+    }
+
+    async function deleteChannel(id) { if (confirm('删除此渠道？')) { await api(`/api/alert-channels/${id}`, 'DELETE'); loadAlerts(); } }
+
+    function openPolicyModal() {
+        const sel = document.getElementById('p-monitor');
+        sel.innerHTML = monitors.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+        const csel = document.getElementById('p-channels');
+        csel.innerHTML = channels.map(c => `<option value="${c.id}">${c.name} (${c.channel_type})</option>`).join('');
+        openModal('policy-modal');
+    }
+
+    async function savePolicy() {
+        const channelSel = document.getElementById('p-channels');
+        const selectedChannels = Array.from(channelSel.selectedOptions).map(o => parseInt(o.value));
+        await api('/api/alert-policies', 'POST', {
+            monitor_id: parseInt(document.getElementById('p-monitor').value),
+            failure_threshold: parseInt(document.getElementById('p-threshold').value),
+            recovery_notify: document.getElementById('p-recovery').value === 'true',
+            channel_ids: selectedChannels,
+            silence_start: document.getElementById('p-silence-start').value || null,
+            silence_end: document.getElementById('p-silence-end').value || null,
+            repeat_interval: parseInt(document.getElementById('p-repeat').value) || 0,
+        });
+        closeModal('policy-modal');
+        loadAlerts();
+    }
+
+    async function deletePolicy(monitorId) { if (confirm('删除此策略？')) { await api(`/api/alert-policies/${monitorId}`, 'DELETE'); loadAlerts(); } }
+
+    // --- Status Pages ---
+    async function loadStatusPages() {
+        const pages = await api('/api/status-pages');
+        document.getElementById('status-pages-table').innerHTML = pages.map(p => `
+            <tr>
+                <td>${p.title}</td>
+                <td><a href="/status-page/${p.slug}" target="_blank">/status-page/${p.slug}</a></td>
+                <td>${p.is_public ? '公开' : '私有'}</td>
+                <td>
+                    <button class="btn btn-outline btn-sm" onclick="copyEmbed('${p.slug}')">复制嵌入代码</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteStatusPage(${p.id})">删除</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function openStatusPageModal() {
+        const sel = document.getElementById('sp-monitors');
+        sel.innerHTML = monitors.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+        openModal('statuspage-modal');
+    }
+
+    async function saveStatusPage() {
+        const selectedMonitors = Array.from(document.getElementById('sp-monitors').selectedOptions).map(o => parseInt(o.value));
+        const page = await api('/api/status-pages', 'POST', {
+            title: document.getElementById('sp-title').value,
+            slug: document.getElementById('sp-slug').value,
+            logo_url: document.getElementById('sp-logo').value || null,
+            is_public: document.getElementById('sp-public').value === 'true',
+        });
+        const group = document.getElementById('sp-group').value || 'Default';
+        for (const mid of selectedMonitors) {
+            await api(`/api/status-pages/${page.id}/items`, 'POST', { monitor_id: mid, group_name: group });
+        }
+        closeModal('statuspage-modal');
+        loadStatusPages();
+    }
+
+    async function deleteStatusPage(id) { if (confirm('删除此状态页？')) { await api(`/api/status-pages/${id}`, 'DELETE'); loadStatusPages(); } }
+
+    function copyEmbed(slug) {
+        const code = `<iframe src="${location.origin}/status-page/${slug}" width="100%" height="600" frameborder="0"></iframe>`;
+        navigator.clipboard.writeText(code);
+        alert('嵌入代码已复制到剪贴板');
+    }
+
+    // --- Init ---
+    loadMonitors();
+    setInterval(loadMonitors, 15000);
     </script>
 </body>
 </html>

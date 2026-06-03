@@ -1,138 +1,158 @@
 import asyncio
 import time
-import socket
-import subprocess
 import httpx
-from datetime import datetime
-from app.database import SessionLocal, Monitor, CheckResult
+import socket
+import struct
+import os
+from dataclasses import dataclass
 
 
-async def check_http(monitor: Monitor) -> dict:
+@dataclass
+class CheckResponse:
+    status: str  # "up" or "down"
+    latency: float | None = None  # ms
+    error: str | None = None
+
+
+async def check_http(target: str, timeout: int = 10, expected_status: int = 200,
+                     keyword: str | None = None, method: str = "GET") -> CheckResponse:
     start = time.time()
     try:
-        async with httpx.AsyncClient(timeout=monitor.timeout, follow_redirects=True) as client:
-            response = await client.get(monitor.target)
+        async with httpx.AsyncClient(verify=False, follow_redirects=True) as client:
+            resp = await client.request(method, target, timeout=timeout)
             latency = (time.time() - start) * 1000
 
-            if monitor.expected_status_code and response.status_code != monitor.expected_status_code:
-                return {
-                    "status": "down",
-                    "latency": latency,
-                    "error": f"Expected status {monitor.expected_status_code}, got {response.status_code}",
-                    "status_code": response.status_code,
-                }
+            if resp.status_code != expected_status:
+                return CheckResponse(
+                    status="down", latency=latency,
+                    error=f"Expected status {expected_status}, got {resp.status_code}"
+                )
 
-            if monitor.keyword:
-                text = response.text
-                if monitor.keyword not in text:
-                    return {
-                        "status": "down",
-                        "latency": latency,
-                        "error": f"Keyword '{monitor.keyword}' not found in response",
-                        "status_code": response.status_code,
-                    }
+            if keyword:
+                body = resp.text
+                if keyword not in body:
+                    return CheckResponse(
+                        status="down", latency=latency,
+                        error=f"Keyword '{keyword}' not found in response"
+                    )
 
-            return {
-                "status": "up",
-                "latency": latency,
-                "error": None,
-                "status_code": response.status_code,
-            }
+            return CheckResponse(status="up", latency=latency)
     except httpx.TimeoutException:
         latency = (time.time() - start) * 1000
-        return {"status": "down", "latency": latency, "error": "Request timed out", "status_code": None}
+        return CheckResponse(status="down", latency=latency, error="Request timed out")
     except Exception as e:
         latency = (time.time() - start) * 1000
-        return {"status": "down", "latency": latency, "error": str(e), "status_code": None}
+        return CheckResponse(status="down", latency=latency, error=str(e))
 
 
-async def check_tcp(monitor: Monitor) -> dict:
+async def check_tcp(target: str, port: int, timeout: int = 10) -> CheckResponse:
     start = time.time()
-    port = monitor.port
-    if not port:
-        return {"status": "down", "latency": 0, "error": "No port specified", "status_code": None}
-
-    host = monitor.target.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
-
     try:
-        loop = asyncio.get_event_loop()
-        fut = asyncio.open_connection(host, port)
-        reader, writer = await asyncio.wait_for(fut, timeout=monitor.timeout)
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(target, port), timeout=timeout
+        )
         latency = (time.time() - start) * 1000
         writer.close()
         await writer.wait_closed()
-        return {"status": "up", "latency": latency, "error": None, "status_code": None}
+        return CheckResponse(status="up", latency=latency)
     except asyncio.TimeoutError:
         latency = (time.time() - start) * 1000
-        return {"status": "down", "latency": latency, "error": "Connection timed out", "status_code": None}
+        return CheckResponse(status="down", latency=latency, error="Connection timed out")
     except Exception as e:
         latency = (time.time() - start) * 1000
-        return {"status": "down", "latency": latency, "error": str(e), "status_code": None}
+        return CheckResponse(status="down", latency=latency, error=str(e))
 
 
-async def check_icmp(monitor: Monitor) -> dict:
-    host = monitor.target.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+def _icmp_checksum(data: bytes) -> int:
+    s = 0
+    n = len(data) % 2
+    for i in range(0, len(data) - n, 2):
+        s += (data[i]) + ((data[i + 1]) << 8)
+    if n:
+        s += data[-1]
+    while s >> 16:
+        s = (s & 0xFFFF) + (s >> 16)
+    return ~s & 0xFFFF
+
+
+async def check_icmp(target: str, timeout: int = 10) -> CheckResponse:
+    loop = asyncio.get_event_loop()
+    try:
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _ping_sync, target, timeout),
+            timeout=timeout + 1
+        )
+        return result
+    except asyncio.TimeoutError:
+        return CheckResponse(status="down", error="Ping timed out")
+
+
+def _ping_sync(target: str, timeout: int) -> CheckResponse:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+    except PermissionError:
+        return _ping_fallback(target, timeout)
+
+    sock.settimeout(timeout)
+    packet_id = os.getpid() & 0xFFFF
+    header = struct.pack("!BBHHH", 8, 0, 0, packet_id, 1)
+    payload = b"uptimeguard" * 4
+    chk = _icmp_checksum(header + payload)
+    header = struct.pack("!BBHHH", 8, 0, chk, packet_id, 1)
+    packet = header + payload
+
+    try:
+        dest = socket.gethostbyname(target)
+    except socket.gaierror as e:
+        sock.close()
+        return CheckResponse(status="down", error=f"DNS resolution failed: {e}")
+
     start = time.time()
-
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ping", "-c", "1", "-W", str(monitor.timeout), host,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=monitor.timeout + 2)
+        sock.sendto(packet, (dest, 0))
+        sock.recv(1024)
         latency = (time.time() - start) * 1000
-
-        if proc.returncode == 0:
-            output = stdout.decode()
-            for line in output.split("\n"):
-                if "time=" in line:
-                    time_part = line.split("time=")[1].split(" ")[0]
-                    try:
-                        latency = float(time_part)
-                    except ValueError:
-                        pass
-                    break
-            return {"status": "up", "latency": latency, "error": None, "status_code": None}
-        else:
-            return {"status": "down", "latency": latency, "error": "Host unreachable", "status_code": None}
-    except asyncio.TimeoutError:
-        latency = (time.time() - start) * 1000
-        return {"status": "down", "latency": latency, "error": "Ping timed out", "status_code": None}
+        sock.close()
+        return CheckResponse(status="up", latency=latency)
+    except socket.timeout:
+        sock.close()
+        return CheckResponse(status="down", error="Ping timed out")
     except Exception as e:
-        latency = (time.time() - start) * 1000
-        return {"status": "down", "latency": latency, "error": str(e), "status_code": None}
+        sock.close()
+        return CheckResponse(status="down", error=str(e))
 
 
-async def run_check(monitor_id: int):
-    db = SessionLocal()
+def _ping_fallback(target: str, timeout: int) -> CheckResponse:
+    import subprocess
+    start = time.time()
     try:
-        monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-        if not monitor or not monitor.active:
-            return
-
-        if monitor.monitor_type == "http":
-            result = await check_http(monitor)
-        elif monitor.monitor_type == "tcp":
-            result = await check_tcp(monitor)
-        elif monitor.monitor_type == "icmp":
-            result = await check_icmp(monitor)
-        else:
-            result = {"status": "down", "latency": 0, "error": f"Unknown type: {monitor.monitor_type}", "status_code": None}
-
-        check_result = CheckResult(
-            monitor_id=monitor.id,
-            timestamp=datetime.utcnow(),
-            status=result["status"],
-            latency=result["latency"],
-            error=result["error"],
-            status_code=result.get("status_code"),
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), target],
+            capture_output=True, text=True, timeout=timeout + 2
         )
-        db.add(check_result)
-        db.commit()
-    finally:
-        db.close()
+        latency = (time.time() - start) * 1000
+        if result.returncode == 0:
+            for line in result.stdout.split("\n"):
+                if "time=" in line:
+                    t = line.split("time=")[1].split()[0]
+                    latency = float(t)
+                    break
+            return CheckResponse(status="up", latency=latency)
+        return CheckResponse(status="down", error="Ping failed")
+    except subprocess.TimeoutExpired:
+        return CheckResponse(status="down", error="Ping timed out")
+    except Exception as e:
+        return CheckResponse(status="down", error=str(e))
 
 
-def run_check_sync(monitor_id: int):
-    asyncio.run(run_check(monitor_id))
+async def run_check(monitor_type: str, target: str, port: int | None = None,
+                    timeout: int = 10, expected_status: int = 200,
+                    keyword: str | None = None, method: str = "GET") -> CheckResponse:
+    if monitor_type == "http":
+        return await check_http(target, timeout, expected_status, keyword, method)
+    elif monitor_type == "tcp":
+        return await check_tcp(target, port or 80, timeout)
+    elif monitor_type == "icmp":
+        return await check_icmp(target, timeout)
+    else:
+        return CheckResponse(status="down", error=f"Unknown monitor type: {monitor_type}")

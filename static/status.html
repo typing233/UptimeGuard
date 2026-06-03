@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>服务状态</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #1e293b; min-height: 100vh; }
+        .header { text-align: center; padding: 40px 20px 30px; }
+        .header img { max-height: 48px; margin-bottom: 12px; }
+        .header h1 { font-size: 24px; font-weight: 700; }
+        .header .overall { margin-top: 12px; padding: 10px 24px; border-radius: 24px; display: inline-block; font-weight: 600; font-size: 14px; }
+        .header .overall.all-up { background: #d1fae5; color: #065f46; }
+        .header .overall.some-down { background: #fee2e2; color: #991b1b; }
+        .container { max-width: 800px; margin: 0 auto; padding: 0 20px 40px; }
+        .group-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin: 24px 0 8px; }
+        .service { background: white; border-radius: 8px; padding: 16px 20px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .service .info { display: flex; align-items: center; gap: 12px; }
+        .service .dot { width: 10px; height: 10px; border-radius: 50%; }
+        .service .dot.up { background: #10b981; }
+        .service .dot.down { background: #ef4444; }
+        .service .dot.pending { background: #9ca3af; }
+        .service .name { font-weight: 500; font-size: 15px; }
+        .service .meta { text-align: right; }
+        .service .uptime { font-size: 13px; color: #10b981; font-weight: 600; }
+        .service .last-check { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+        .incidents-section { margin-top: 40px; }
+        .incidents-section h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: #334155; }
+        .incident { background: white; border-radius: 8px; padding: 14px 20px; margin-bottom: 8px; border-left: 4px solid #ef4444; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .incident.resolved { border-left-color: #10b981; }
+        .incident .inc-header { display: flex; justify-content: space-between; align-items: center; }
+        .incident .inc-name { font-weight: 500; font-size: 14px; }
+        .incident .inc-time { font-size: 12px; color: #64748b; }
+        .incident .inc-detail { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+        .footer { text-align: center; padding: 20px; font-size: 12px; color: #94a3b8; }
+        .empty-msg { text-align: center; padding: 40px; color: #94a3b8; }
+        .embed-note { display: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img id="logo" style="display:none;">
+        <h1 id="page-title">服务状态</h1>
+        <div class="overall all-up" id="overall-status">所有服务正常运行</div>
+    </div>
+    <div class="container">
+        <div id="services-container"></div>
+        <div class="incidents-section">
+            <h2>近期事件</h2>
+            <div id="incidents-container"><div class="empty-msg">暂无事件记录</div></div>
+        </div>
+    </div>
+    <div class="footer">Powered by UptimeGuard</div>
+
+    <script>
+    async function loadStatus() {
+        const slug = window.location.pathname.split('/').pop();
+        try {
+            const res = await fetch(`/api/status/${slug}`);
+            if (!res.ok) { document.getElementById('services-container').innerHTML = '<div class="empty-msg">状态页不存在或未公开</div>'; return; }
+            const data = await res.json();
+
+            document.getElementById('page-title').textContent = data.title;
+            document.title = data.title;
+            if (data.logo_url) { const logo = document.getElementById('logo'); logo.src = data.logo_url; logo.style.display = ''; }
+
+            const hasDown = data.services.some(s => s.status === 'down');
+            const overall = document.getElementById('overall-status');
+            if (hasDown) { overall.textContent = '部分服务异常'; overall.className = 'overall some-down'; }
+            else { overall.textContent = '所有服务正常运行'; overall.className = 'overall all-up'; }
+
+            // Group services
+            const groups = {};
+            data.services.forEach(s => { if (!groups[s.group]) groups[s.group] = []; groups[s.group].push(s); });
+
+            let html = '';
+            for (const [group, services] of Object.entries(groups)) {
+                html += `<div class="group-title">${group}</div>`;
+                services.forEach(s => {
+                    html += `
+                        <div class="service">
+                            <div class="info">
+                                <div class="dot ${s.status}"></div>
+                                <span class="name">${s.name}</span>
+                            </div>
+                            <div class="meta">
+                                <div class="uptime">${s.uptime_24h}% uptime</div>
+                                <div class="last-check">${s.last_check ? new Date(s.last_check).toLocaleString() : '未检测'}</div>
+                            </div>
+                        </div>`;
+                });
+            }
+            document.getElementById('services-container').innerHTML = html;
+
+            // Incidents
+            if (data.incidents && data.incidents.length > 0) {
+                document.getElementById('incidents-container').innerHTML = data.incidents.map(inc => {
+                    const resolved = !!inc.resolved_at;
+                    const duration = resolved ?
+                        Math.round((new Date(inc.resolved_at) - new Date(inc.started_at)) / 60000) + '分钟' : '进行中';
+                    return `
+                        <div class="incident ${resolved ? 'resolved' : ''}">
+                            <div class="inc-header">
+                                <span class="inc-name">${inc.monitor_name} - ${resolved ? '已恢复' : '故障中'}</span>
+                                <span class="inc-time">${new Date(inc.started_at).toLocaleString()}</span>
+                            </div>
+                            <div class="inc-detail">持续: ${duration}${inc.error ? ' | ' + inc.error : ''}</div>
+                        </div>`;
+                }).join('');
+            }
+        } catch(e) {
+            document.getElementById('services-container').innerHTML = '<div class="empty-msg">加载失败</div>';
+        }
+    }
+    loadStatus();
+    setInterval(loadStatus, 30000);
+    </script>
+</body>
+</html>

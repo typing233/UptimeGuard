@@ -1,21 +1,13 @@
 #!/bin/bash
 set -e
 
-echo "=== UptimeGuard 启动 ==="
-
 if [ ! -d "venv" ]; then
-    echo "创建虚拟环境..."
+    echo "Creating virtual environment..."
     python3 -m venv venv
 fi
 
 source venv/bin/activate
-echo "安装依赖..."
-pip install -r requirements.txt -q
+pip install -q -r requirements.txt
 
-echo ""
-echo "启动服务..."
-echo "访问地址: http://localhost:8000"
-echo "按 Ctrl+C 停止"
-echo ""
-
+echo "Starting UptimeGuard..."
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
