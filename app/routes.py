@@ -75,8 +75,10 @@ async def trigger_check(monitor_id: int, db: AsyncSession = Depends(get_db)):
     monitor = await db.get(Monitor, monitor_id)
     if not monitor:
         raise HTTPException(status_code=404, detail="Monitor not found")
-    await execute_check(monitor_id)
-    return {"detail": "Check triggered"}
+    result = await execute_check(monitor_id)
+    if result is None:
+        raise HTTPException(status_code=500, detail="Check execution failed")
+    return result
 
 
 # --- Check Results ---
@@ -177,7 +179,21 @@ async def delete_policy(monitor_id: int, db: AsyncSession = Depends(get_db)):
 @router.get("/status-pages")
 async def list_status_pages(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(StatusPage))
-    return result.scalars().all()
+    pages = result.scalars().all()
+    response = []
+    for page in pages:
+        stmt = select(StatusPageItem).where(StatusPageItem.status_page_id == page.id).order_by(StatusPageItem.sort_order)
+        items_result = await db.execute(stmt)
+        items = items_result.scalars().all()
+        response.append({
+            "id": page.id,
+            "title": page.title,
+            "slug": page.slug,
+            "logo_url": page.logo_url,
+            "is_public": page.is_public,
+            "items": [{"id": it.id, "monitor_id": it.monitor_id, "group_name": it.group_name, "sort_order": it.sort_order} for it in items],
+        })
+    return response
 
 
 @router.post("/status-pages")
@@ -233,6 +249,27 @@ async def remove_status_page_item(page_id: int, item_id: int, db: AsyncSession =
     return {"detail": "Deleted"}
 
 
+@router.put("/status-pages/{page_id}/items")
+async def replace_status_page_items(page_id: int, items: list[StatusPageItemCreate], db: AsyncSession = Depends(get_db)):
+    page = await db.get(StatusPage, page_id)
+    if not page:
+        raise HTTPException(status_code=404, detail="Status page not found")
+    stmt = select(StatusPageItem).where(StatusPageItem.status_page_id == page_id)
+    existing = await db.execute(stmt)
+    for old_item in existing.scalars().all():
+        await db.delete(old_item)
+    for i, item_data in enumerate(items):
+        new_item = StatusPageItem(
+            status_page_id=page_id,
+            monitor_id=item_data.monitor_id,
+            group_name=item_data.group_name,
+            sort_order=item_data.sort_order if item_data.sort_order else i,
+        )
+        db.add(new_item)
+    await db.commit()
+    return {"detail": "Items updated"}
+
+
 # --- Public Status Page Data ---
 
 @router.get("/status/{slug}")
@@ -284,10 +321,14 @@ async def public_status_page(slug: str, db: AsyncSession = Depends(get_db)):
         inc_result = await db.execute(stmt)
         for inc in inc_result.scalars().all():
             monitor = await db.get(Monitor, inc.monitor_id)
+            duration_seconds = None
+            if inc.resolved_at:
+                duration_seconds = int((inc.resolved_at - inc.started_at).total_seconds())
             incidents.append({
                 "monitor_name": monitor.name if monitor else "Unknown",
                 "started_at": inc.started_at.isoformat(),
                 "resolved_at": inc.resolved_at.isoformat() if inc.resolved_at else None,
+                "duration_seconds": duration_seconds,
                 "error": inc.error,
             })
 

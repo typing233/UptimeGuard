@@ -32,7 +32,7 @@
         .incident .inc-header { display: flex; justify-content: space-between; align-items: center; }
         .incident .inc-name { font-weight: 500; font-size: 14px; }
         .incident .inc-time { font-size: 12px; color: #64748b; }
-        .incident .inc-detail { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+        .incident .inc-detail { font-size: 12px; color: #64748b; margin-top: 6px; line-height: 1.8; }
         .footer { text-align: center; padding: 20px; font-size: 12px; color: #94a3b8; }
         .empty-msg { text-align: center; padding: 40px; color: #94a3b8; }
         .embed-note { display: none; }
@@ -54,6 +54,15 @@
     <div class="footer">Powered by UptimeGuard</div>
 
     <script>
+    function formatDuration(seconds) {
+        if (!seconds) return '进行中';
+        if (seconds < 60) return seconds + '秒';
+        if (seconds < 3600) return Math.floor(seconds / 60) + '分钟';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        return h + '小时' + (m > 0 ? m + '分钟' : '');
+    }
+
     async function loadStatus() {
         const slug = window.location.pathname.split('/').pop();
         try {
@@ -93,19 +102,24 @@
             }
             document.getElementById('services-container').innerHTML = html;
 
-            // Incidents
+            // Incidents with explicit start/recovery times
             if (data.incidents && data.incidents.length > 0) {
                 document.getElementById('incidents-container').innerHTML = data.incidents.map(inc => {
                     const resolved = !!inc.resolved_at;
-                    const duration = resolved ?
-                        Math.round((new Date(inc.resolved_at) - new Date(inc.started_at)) / 60000) + '分钟' : '进行中';
+                    const startTime = new Date(inc.started_at).toLocaleString();
+                    const resolveTime = resolved ? new Date(inc.resolved_at).toLocaleString() : null;
+                    const duration = formatDuration(inc.duration_seconds);
                     return `
                         <div class="incident ${resolved ? 'resolved' : ''}">
                             <div class="inc-header">
                                 <span class="inc-name">${inc.monitor_name} - ${resolved ? '已恢复' : '故障中'}</span>
-                                <span class="inc-time">${new Date(inc.started_at).toLocaleString()}</span>
                             </div>
-                            <div class="inc-detail">持续: ${duration}${inc.error ? ' | ' + inc.error : ''}</div>
+                            <div class="inc-detail">
+                                <div>故障开始: ${startTime}</div>
+                                <div>${resolved ? '恢复时间: ' + resolveTime : '状态: 尚未恢复'}</div>
+                                <div>持续时长: ${duration}</div>
+                                ${inc.error ? '<div>原因: ' + inc.error + '</div>' : ''}
+                            </div>
                         </div>`;
                 }).join('');
             }

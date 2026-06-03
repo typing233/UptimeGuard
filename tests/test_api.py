@@ -112,3 +112,104 @@ async def test_status_page_lifecycle(client):
 async def test_status_page_not_found(client):
     resp = await client.get("/api/status/nonexistent")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_trigger_check_returns_result(client):
+    resp = await client.post("/api/monitors", json={
+        "name": "Trigger Test",
+        "monitor_type": "tcp",
+        "target": "127.0.0.1",
+        "port": 1,
+        "interval": 60,
+        "timeout": 2,
+    })
+    mid = resp.json()["id"]
+    check_resp = await client.post(f"/api/monitors/{mid}/check")
+    assert check_resp.status_code == 200
+    data = check_resp.json()
+    assert "status" in data
+    assert "latency" in data
+    assert "timestamp" in data
+    assert data["monitor_id"] == mid
+
+
+@pytest.mark.asyncio
+async def test_check_with_alert_policy_does_not_crash(client):
+    m_resp = await client.post("/api/monitors", json={
+        "name": "Alert Test",
+        "monitor_type": "tcp",
+        "target": "127.0.0.1",
+        "port": 1,
+        "interval": 60,
+        "timeout": 2,
+    })
+    mid = m_resp.json()["id"]
+    # Create alert policy with non-existent channel IDs — should not crash
+    await client.post("/api/alert-policies", json={
+        "monitor_id": mid, "failure_threshold": 1, "recovery_notify": True,
+        "channel_ids": [9999], "repeat_interval": 0,
+    })
+    check_resp = await client.post(f"/api/monitors/{mid}/check")
+    assert check_resp.status_code == 200
+    assert check_resp.json()["status"] == "down"
+
+    # Verify result was persisted
+    results_resp = await client.get(f"/api/monitors/{mid}/results")
+    assert results_resp.status_code == 200
+    assert len(results_resp.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_status_page_edit(client):
+    m_resp = await client.post("/api/monitors", json={"name": "Edit SP", "monitor_type": "http", "target": "https://a.com", "interval": 60, "timeout": 5})
+    mid = m_resp.json()["id"]
+    m2_resp = await client.post("/api/monitors", json={"name": "Edit SP2", "monitor_type": "http", "target": "https://b.com", "interval": 60, "timeout": 5})
+    mid2 = m2_resp.json()["id"]
+
+    sp_resp = await client.post("/api/status-pages", json={"title": "Original", "slug": "edit-test"})
+    sp_id = sp_resp.json()["id"]
+
+    # Add initial item
+    await client.post(f"/api/status-pages/{sp_id}/items", json={"monitor_id": mid, "group_name": "G1"})
+
+    # Edit: change title and replace items
+    await client.put(f"/api/status-pages/{sp_id}", json={"title": "Updated Title"})
+    await client.put(f"/api/status-pages/{sp_id}/items", json=[
+        {"monitor_id": mid, "group_name": "NewGroup", "sort_order": 0},
+        {"monitor_id": mid2, "group_name": "NewGroup", "sort_order": 1},
+    ])
+
+    public_resp = await client.get("/api/status/edit-test")
+    data = public_resp.json()
+    assert data["title"] == "Updated Title"
+    assert len(data["services"]) == 2
+    assert data["services"][0]["group"] == "NewGroup"
+
+
+@pytest.mark.asyncio
+async def test_incidents_have_timestamps(client):
+    m_resp = await client.post("/api/monitors", json={
+        "name": "Incident Test",
+        "monitor_type": "tcp",
+        "target": "127.0.0.1",
+        "port": 1,
+        "interval": 60,
+        "timeout": 2,
+    })
+    mid = m_resp.json()["id"]
+
+    # Trigger a down check to create an incident
+    await client.post(f"/api/monitors/{mid}/check")
+
+    sp_resp = await client.post("/api/status-pages", json={"title": "Inc Page", "slug": "inc-test"})
+    sp_id = sp_resp.json()["id"]
+    await client.post(f"/api/status-pages/{sp_id}/items", json={"monitor_id": mid, "group_name": "Test"})
+
+    public_resp = await client.get("/api/status/inc-test")
+    data = public_resp.json()
+    assert len(data["incidents"]) == 1
+    inc = data["incidents"][0]
+    assert inc["started_at"] is not None
+    assert inc["resolved_at"] is None
+    assert inc["duration_seconds"] is None

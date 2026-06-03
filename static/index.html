@@ -234,11 +234,14 @@
             <h3 id="sp-modal-title">新建状态页</h3>
             <input type="hidden" id="sp-edit-id">
             <div class="form-group"><label>标题</label><input id="sp-title" placeholder="Service Status"></div>
-            <div class="form-group"><label>链接标识（slug）</label><input id="sp-slug" placeholder="my-status"></div>
+            <div class="form-group" id="fg-slug"><label>链接标识（slug）</label><input id="sp-slug" placeholder="my-status"></div>
             <div class="form-group"><label>Logo URL（可选）</label><input id="sp-logo" placeholder="https://..."></div>
             <div class="form-group"><label>公开</label><select id="sp-public"><option value="true">是</option><option value="false">否</option></select></div>
-            <div class="form-group"><label>添加服务（监控项）</label><select id="sp-monitors" multiple style="height:80px;"></select></div>
-            <div class="form-group"><label>分组名称</label><input id="sp-group" value="Default" placeholder="分组名"></div>
+            <div id="sp-services-section">
+                <div class="form-group"><label>服务配置（每行一个：选择监控项及其分组）</label></div>
+                <div id="sp-service-rows"></div>
+                <button class="btn btn-outline btn-sm" type="button" onclick="addServiceRow()">+ 添加服务</button>
+            </div>
             <div class="form-actions">
                 <button class="btn btn-outline" onclick="closeModal('statuspage-modal')">取消</button>
                 <button class="btn btn-primary" onclick="saveStatusPage()">保存</button>
@@ -469,38 +472,93 @@
     async function deletePolicy(monitorId) { if (confirm('删除此策略？')) { await api(`/api/alert-policies/${monitorId}`, 'DELETE'); loadAlerts(); } }
 
     // --- Status Pages ---
+    let statusPages = [];
+
     async function loadStatusPages() {
-        const pages = await api('/api/status-pages');
-        document.getElementById('status-pages-table').innerHTML = pages.map(p => `
+        statusPages = await api('/api/status-pages');
+        document.getElementById('status-pages-table').innerHTML = statusPages.map(p => `
             <tr>
                 <td>${p.title}</td>
                 <td><a href="/status-page/${p.slug}" target="_blank">/status-page/${p.slug}</a></td>
                 <td>${p.is_public ? '公开' : '私有'}</td>
                 <td>
-                    <button class="btn btn-outline btn-sm" onclick="copyEmbed('${p.slug}')">复制嵌入代码</button>
+                    <button class="btn btn-outline btn-sm" onclick="editStatusPage(${p.id})">编辑</button>
+                    <button class="btn btn-outline btn-sm" onclick="copyEmbed('${p.slug}')">嵌入代码</button>
                     <button class="btn btn-danger btn-sm" onclick="deleteStatusPage(${p.id})">删除</button>
                 </td>
             </tr>
         `).join('');
     }
 
-    function openStatusPageModal() {
-        const sel = document.getElementById('sp-monitors');
-        sel.innerHTML = monitors.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+    function addServiceRow(monitorId = '', groupName = 'Default') {
+        const container = document.getElementById('sp-service-rows');
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;align-items:center;';
+        const monitorOpts = monitors.map(m => `<option value="${m.id}" ${m.id == monitorId ? 'selected' : ''}>${m.name}</option>`).join('');
+        row.innerHTML = `
+            <select style="flex:1;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;">${monitorOpts}</select>
+            <input style="width:120px;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;" value="${groupName}" placeholder="分组名">
+            <button class="btn btn-danger btn-sm" type="button" onclick="this.parentElement.remove()">✕</button>
+        `;
+        container.appendChild(row);
+    }
+
+    function openStatusPageModal(data = null) {
+        document.getElementById('sp-modal-title').textContent = data ? '编辑状态页' : '新建状态页';
+        document.getElementById('sp-edit-id').value = data ? data.id : '';
+        document.getElementById('sp-title').value = data ? data.title : '';
+        document.getElementById('sp-slug').value = data ? data.slug : '';
+        document.getElementById('sp-logo').value = data ? (data.logo_url || '') : '';
+        document.getElementById('sp-public').value = data ? String(data.is_public) : 'true';
+        // Slug is read-only when editing
+        const slugInput = document.getElementById('sp-slug');
+        if (data) { slugInput.readOnly = true; slugInput.style.background = '#f3f4f6'; }
+        else { slugInput.readOnly = false; slugInput.style.background = ''; }
+        // Build service rows
+        const container = document.getElementById('sp-service-rows');
+        container.innerHTML = '';
+        if (data && data.items && data.items.length > 0) {
+            data.items.forEach(item => addServiceRow(item.monitor_id, item.group_name));
+        } else {
+            addServiceRow();
+        }
         openModal('statuspage-modal');
     }
 
+    async function editStatusPage(id) {
+        const page = statusPages.find(p => p.id === id);
+        if (!page) return;
+        openStatusPageModal(page);
+    }
+
     async function saveStatusPage() {
-        const selectedMonitors = Array.from(document.getElementById('sp-monitors').selectedOptions).map(o => parseInt(o.value));
-        const page = await api('/api/status-pages', 'POST', {
-            title: document.getElementById('sp-title').value,
-            slug: document.getElementById('sp-slug').value,
-            logo_url: document.getElementById('sp-logo').value || null,
-            is_public: document.getElementById('sp-public').value === 'true',
-        });
-        const group = document.getElementById('sp-group').value || 'Default';
-        for (const mid of selectedMonitors) {
-            await api(`/api/status-pages/${page.id}/items`, 'POST', { monitor_id: mid, group_name: group });
+        const id = document.getElementById('sp-edit-id').value;
+        const title = document.getElementById('sp-title').value;
+        const slug = document.getElementById('sp-slug').value;
+        const logo_url = document.getElementById('sp-logo').value || null;
+        const is_public = document.getElementById('sp-public').value === 'true';
+
+        // Collect service rows
+        const rows = document.getElementById('sp-service-rows').children;
+        const items = [];
+        for (let i = 0; i < rows.length; i++) {
+            const select = rows[i].querySelector('select');
+            const input = rows[i].querySelector('input');
+            if (select && select.value) {
+                items.push({ monitor_id: parseInt(select.value), group_name: input.value || 'Default', sort_order: i });
+            }
+        }
+
+        if (id) {
+            // Update existing
+            await api(`/api/status-pages/${id}`, 'PUT', { title, logo_url, is_public });
+            await api(`/api/status-pages/${id}/items`, 'PUT', items);
+        } else {
+            // Create new
+            const page = await api('/api/status-pages', 'POST', { title, slug, logo_url, is_public });
+            if (items.length > 0) {
+                await api(`/api/status-pages/${page.id}/items`, 'PUT', items);
+            }
         }
         closeModal('statuspage-modal');
         loadStatusPages();

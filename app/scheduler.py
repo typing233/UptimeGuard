@@ -25,86 +25,91 @@ def _in_silence_window(policy: AlertPolicy) -> bool:
 
 async def _process_alert(monitor: Monitor, result_status: str, error: str,
                          latency: float, session):
-    policy = await session.get(AlertPolicy, monitor.id) if monitor.alert_policy else None
-    if not policy:
+    try:
         stmt = select(AlertPolicy).where(AlertPolicy.monitor_id == monitor.id)
         res = await session.execute(stmt)
         policy = res.scalar_one_or_none()
-    if not policy:
-        return
+        if not policy:
+            return
 
-    if result_status == "down":
-        policy.consecutive_failures += 1
+        if result_status == "down":
+            policy.consecutive_failures += 1
 
-        if policy.consecutive_failures >= policy.failure_threshold:
-            if _in_silence_window(policy):
-                return
+            if policy.consecutive_failures >= policy.failure_threshold:
+                if _in_silence_window(policy):
+                    return
 
-            should_send = False
-            if not policy.alerted:
-                should_send = True
-                policy.alerted = True
-            elif policy.repeat_interval > 0 and policy.last_alert_time:
-                elapsed = (datetime.now(timezone.utc) - policy.last_alert_time).total_seconds() / 60
-                if elapsed >= policy.repeat_interval:
+                should_send = False
+                if not policy.alerted:
                     should_send = True
+                    policy.alerted = True
+                elif policy.repeat_interval > 0 and policy.last_alert_time:
+                    elapsed = (datetime.now(timezone.utc) - policy.last_alert_time).total_seconds() / 60
+                    if elapsed >= policy.repeat_interval:
+                        should_send = True
 
-            if should_send:
-                policy.last_alert_time = datetime.now(timezone.utc)
+                if should_send:
+                    policy.last_alert_time = datetime.now(timezone.utc)
+                    context = build_context(
+                        monitor_name=monitor.name, target=monitor.target,
+                        status="down", failure_count=policy.consecutive_failures,
+                        error=error or "", latency=latency or 0
+                    )
+                    await _send_to_channels(policy.channel_ids or [], context, session)
+
+        elif result_status == "up" and policy.alerted:
+            if policy.recovery_notify:
                 context = build_context(
                     monitor_name=monitor.name, target=monitor.target,
-                    status="down", failure_count=policy.consecutive_failures,
-                    error=error or "", latency=latency or 0
+                    status="up", failure_count=policy.consecutive_failures,
+                    recovery_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
                 )
                 await _send_to_channels(policy.channel_ids or [], context, session)
+            policy.consecutive_failures = 0
+            policy.alerted = False
+            policy.last_alert_time = None
 
-    elif result_status == "up" and policy.alerted:
-        if policy.recovery_notify:
-            context = build_context(
-                monitor_name=monitor.name, target=monitor.target,
-                status="up", failure_count=policy.consecutive_failures,
-                recovery_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-            )
-            await _send_to_channels(policy.channel_ids or [], context, session)
-        policy.consecutive_failures = 0
-        policy.alerted = False
-        policy.last_alert_time = None
+    except Exception as e:
+        logger.error(f"Alert processing failed for monitor {monitor.id}: {e}")
 
 
 async def _send_to_channels(channel_ids: list, context: dict, session):
     for cid in channel_ids:
-        channel = await session.get(AlertChannel, cid)
-        if channel and channel.enabled:
-            try:
+        try:
+            channel = await session.get(AlertChannel, cid)
+            if channel and channel.enabled:
                 await send_alert(channel.channel_type, channel.config, context)
-            except Exception as e:
-                logger.error(f"Failed to send alert via {channel.name}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to send alert to channel {cid}: {e}")
 
 
 async def _manage_incident(monitor: Monitor, result_status: str, error: str, session):
-    stmt = select(Incident).where(
-        Incident.monitor_id == monitor.id,
-        Incident.resolved_at.is_(None)
-    )
-    res = await session.execute(stmt)
-    open_incident = res.scalar_one_or_none()
-
-    if result_status == "down" and not open_incident:
-        incident = Incident(
-            monitor_id=monitor.id,
-            started_at=datetime.now(timezone.utc),
-            error=error
+    try:
+        stmt = select(Incident).where(
+            Incident.monitor_id == monitor.id,
+            Incident.resolved_at.is_(None)
         )
-        session.add(incident)
-    elif result_status == "up" and open_incident:
-        open_incident.resolved_at = datetime.now(timezone.utc)
+        res = await session.execute(stmt)
+        open_incident = res.scalar_one_or_none()
+
+        if result_status == "down" and not open_incident:
+            incident = Incident(
+                monitor_id=monitor.id,
+                started_at=datetime.now(timezone.utc),
+                error=error
+            )
+            session.add(incident)
+        elif result_status == "up" and open_incident:
+            open_incident.resolved_at = datetime.now(timezone.utc)
+    except Exception as e:
+        logger.error(f"Incident tracking failed for monitor {monitor.id}: {e}")
 
 
-async def execute_check(monitor_id: int):
+async def execute_check(monitor_id: int) -> dict | None:
     async with async_session() as session:
         monitor = await session.get(Monitor, monitor_id)
-        if not monitor or not monitor.active:
-            return
+        if not monitor:
+            return None
 
         result = await run_check(
             monitor_type=monitor.monitor_type,
@@ -131,6 +136,14 @@ async def execute_check(monitor_id: int):
         await _manage_incident(monitor, result.status, result.error or "", session)
 
         await session.commit()
+
+        return {
+            "monitor_id": monitor.id,
+            "status": result.status,
+            "latency": result.latency,
+            "error": result.error,
+            "timestamp": monitor.last_check.isoformat(),
+        }
 
 
 def schedule_monitor(monitor_id: int, interval_seconds: int):
